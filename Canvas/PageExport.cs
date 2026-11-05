@@ -71,11 +71,12 @@ public enum ExportKind
     Tiles,
 }
 
-public readonly record struct ExportSettings(ExportKind Kind, int LongSide, int JpegQuality)
+public readonly record struct ExportSettings(ExportKind Kind, int LongSide, int JpegQuality, bool Threads = false, bool Gpu = false)
 {
     public static ExportSettings Screen { get; } = new(ExportKind.Pdf, 2048, 75);
     public static ExportSettings Print { get; } = new(ExportKind.Pdf, 4096, 85);
-    public static ExportSettings Fine { get; } = new(ExportKind.Pdf, 8192, 92);
+    /// <summary>The whole export square. A single picture is still limited to <see cref="PageExport.MaxRasterSide"/>.</summary>
+    public static ExportSettings Fine { get; } = new(ExportKind.Pdf, int.MaxValue, 92);
 
     public static ExportSettings For(ExportKind kind, int preset)
     {
@@ -95,6 +96,7 @@ public static class PageExport
 {
     public const float MaxPdfPoints = 14400;
     public const int MaxRasterSide = 8192;
+    public const int MaxTileSide = 65536;
     public const int TileSize = 512;
 
     public static void Write(string path, ExportPage page, IReadOnlyList<ExportSheet> sheets) =>
@@ -138,7 +140,23 @@ public static class PageExport
         if (pageSize < 1)
             return 1;
 
-        return (int)Math.Clamp(Math.Round(Math.Min(pageSize, requested)), 1, MaxRasterSide);
+        var page = (int)Math.Round(pageSize);
+        var wanted = requested >= page ? page : Math.Min(page, requested);
+        return Math.Clamp(wanted, 1, MaxRasterSide);
+    }
+
+    /// <summary>
+    /// Tile pyramid side. Fine is the export square itself, so a large survey stays as sharp
+    /// at the closest zoom as a small one. A single JPEG or PNG still stops at <see cref="MaxRasterSide"/>.
+    /// </summary>
+    public static int TileSide(double pageSize, int requested)
+    {
+        if (pageSize < 1)
+            return 1;
+
+        var page = (int)Math.Round(pageSize);
+        var wanted = requested >= page ? page : Math.Min(page, requested);
+        return Math.Clamp(wanted, 1, MaxTileSide);
     }
 
     private static void WritePdf(
@@ -152,16 +170,24 @@ public static class PageExport
         var side = (float)Math.Min(OutputSide(page.Size, settings.LongSide), MaxPdfPoints);
         var scale = side / page.Size;
         var pdf = new PdfDocument(side, side);
-        for (var i = 0; i < sheets.Count; i++)
+        var placed = new SheetPicture?[sheets.Count];
+        using var gpu = OpenGpu(settings);
+        var cores = WorkerCount(settings);
+        if (cores == 1)
         {
-            cancellation.ThrowIfCancellationRequested();
-            progress?.Report(new ExportReport((i + 1d) / Math.Max(sheets.Count, 1), $"Sheet {i + 1} of {sheets.Count}: {sheets[i].Name}"));
-            if (!TryRenderSheet(page, sheets[i], scale, settings.JpegQuality, cancellation, out var jpeg, out var mask, out var width, out var height, out var left, out var top))
-                continue;
+            for (var i = 0; i < sheets.Count; i++)
+                placed[i] = RenderPdfSheet(page, sheets, scale, side, settings, gpu?.Context, progress, i, sheets.Count, cancellation);
+        }
+        else
+        {
+            Parallel.For(0, sheets.Count, new ParallelOptions { MaxDegreeOfParallelism = cores, CancellationToken = cancellation }, i =>
+                placed[i] = RenderPdfSheet(page, sheets, scale, side, settings, null, progress, i, sheets.Count, cancellation));
+        }
 
-            var pdfX = (float)((left - page.X) * scale);
-            var pdfY = (float)(side - (top - page.Y) * scale - height);
-            pdf.AddImage(jpeg, mask, width, height, pdfX, pdfY);
+        foreach (var picture in placed)
+        {
+            if (picture is { } item)
+                pdf.AddImage(item.Jpeg, item.Mask, item.Width, item.Height, item.X, item.Y);
         }
 
         pdf.Save(path);
@@ -173,6 +199,7 @@ public static class PageExport
         double scale,
         int quality,
         CancellationToken cancellation,
+        GRContext? gpu,
         out byte[] jpeg,
         out byte[] mask,
         out int width,
@@ -199,13 +226,16 @@ public static class PageExport
         width = Math.Max(1, (int)Math.Ceiling((right - left) * scale));
         height = Math.Max(1, (int)Math.Ceiling((bottom - top) * scale));
         var info = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var surface = SKSurface.Create(info);
+        using var surface = CreateSurface(info, gpu);
         surface.Canvas.Clear(SKColors.Transparent);
         surface.Canvas.Translate((float)(-left * scale), (float)(-top * scale));
-        DrawSheet(surface.Canvas, sheet, scale, null, cancellation);
+        DrawSheet(surface.Canvas, sheet, scale, null, cancellation, gpu: gpu);
         using var shot = surface.Snapshot();
-        using var pixmap = shot.PeekPixels() ?? throw new InvalidDataException($"Cannot read the export of {sheet.Name}.");
+        using var copy = shot.PeekPixels() is null ? RasterCopy(shot, info) : null;
+        var pixmap = shot.PeekPixels() ?? copy?.PeekPixels() ?? throw new InvalidDataException($"Cannot read the export of {sheet.Name}.");
         mask = AlphaMask(pixmap);
+        // The JPEG is this sheet already laid on white. The mask's /Matte entry tells a viewer
+        // to take that white back off, so a sheet underneath shows through opacity and soft edges.
         using var flat = SKSurface.Create(new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Opaque));
         flat.Canvas.Clear(SKColors.White);
         flat.Canvas.DrawImage(shot, 0, 0);
@@ -275,8 +305,9 @@ public static class PageExport
         var side = OutputSide(page.Size, settings.LongSide);
         var scale = side / page.Size;
         var info = new SKImageInfo(side, side, SKColorType.Rgba8888, SKAlphaType.Premul);
-        using var surface = SKSurface.Create(info);
-        DrawPage(surface.Canvas, page, sheets, side, scale, settings, progress, cancellation);
+        using var gpu = OpenGpu(settings);
+        using var surface = CreateSurface(info, gpu?.Context);
+        DrawPage(surface.Canvas, page, sheets, side, scale, settings, progress, cancellation, gpu?.Context);
         using var image = surface.Snapshot();
         using var data = image.Encode(format, quality) ?? throw new InvalidDataException("Could not encode the export.");
         using var stream = File.Create(path);
@@ -292,7 +323,7 @@ public static class PageExport
         CancellationToken cancellation)
     {
         Directory.CreateDirectory(directory);
-        var finest = OutputSide(page.Size, settings.LongSide);
+        var finest = TileSide(page.Size, settings.LongSide);
         var maxLevel = 0;
         while ((TileSize << maxLevel) < finest)
             maxLevel++;
@@ -305,51 +336,71 @@ public static class PageExport
         }
 
         var done = 0;
+        var cores = WorkerCount(settings);
+        using var gpu = cores == 1 ? OpenGpu(settings) : null;
         for (var level = 0; level <= maxLevel; level++)
         {
             var across = 1 << level;
             var mapPixels = TileSize * across;
             var scale = mapPixels / page.Size;
             var worldPerTile = page.Size / across;
-            var cache = new Dictionary<string, SKImage>(StringComparer.OrdinalIgnoreCase);
-            try
-            {
+            for (var column = 0; column < across; column++)
+                Directory.CreateDirectory(Path.Combine(directory, "tiles", level.ToString(), column.ToString()));
+
+            var tiles = new (int X, int Y)[across * across];
+            var index = 0;
             for (var y = 0; y < across; y++)
             {
                 for (var x = 0; x < across; x++)
+                    tiles[index++] = (x, y);
+            }
+
+            var pictures = new SheetPictures();
+            try
+            {
+                void DrawTile((int X, int Y) tile)
                 {
                     cancellation.ThrowIfCancellationRequested();
-                    done++;
-                    progress?.Report(new ExportReport(
-                        done / (double)total,
-                        $"Tile {done} of {total}, level {level}"));
-                    var tileX = page.X + x * worldPerTile;
-                    var tileY = page.Y + y * worldPerTile;
+                    var tileX = page.X + tile.X * worldPerTile;
+                    var tileY = page.Y + tile.Y * worldPerTile;
                     var info = new SKImageInfo(TileSize, TileSize, SKColorType.Rgba8888, SKAlphaType.Premul);
-                    using var surface = SKSurface.Create(info);
+                    using var surface = CreateSurface(info, gpu?.Context);
                     surface.Canvas.Clear(SKColors.White);
                     surface.Canvas.Translate((float)(-tileX * scale), (float)(-tileY * scale));
                     foreach (var sheet in sheets)
                     {
                         if (!Intersects(sheet, tileX, tileY, tileX + worldPerTile, tileY + worldPerTile))
                             continue;
-                        DrawSheet(surface.Canvas, sheet, scale, null, cancellation, cache);
+                        DrawSheet(surface.Canvas, sheet, scale, null, cancellation, pictures, gpu?.Context);
                     }
 
-                    var folder = Path.Combine(directory, "tiles", level.ToString(), x.ToString());
-                    Directory.CreateDirectory(folder);
+                    gpu?.Context.Flush();
                     using var image = surface.Snapshot();
                     using var data = image.Encode(SKEncodedImageFormat.Jpeg, settings.JpegQuality)
                         ?? throw new InvalidDataException("Could not encode a map tile.");
-                    using var stream = File.Create(Path.Combine(folder, y + ".jpg"));
+                    var folder = Path.Combine(directory, "tiles", level.ToString(), tile.X.ToString());
+                    using var stream = File.Create(Path.Combine(folder, tile.Y + ".jpg"));
                     data.SaveTo(stream);
+                    var finished = Interlocked.Increment(ref done);
+                    progress?.Report(new ExportReport(finished / (double)total, $"Tile {finished} of {total}, level {level}"));
                 }
-            }
+
+                if (cores == 1)
+                {
+                    foreach (var tile in tiles)
+                        DrawTile(tile);
+                }
+                else
+                {
+                    Parallel.ForEach(
+                        tiles,
+                        new ParallelOptions { MaxDegreeOfParallelism = cores, CancellationToken = cancellation },
+                        DrawTile);
+                }
             }
             finally
             {
-                foreach (var cached in cache.Values)
-                    cached.Dispose();
+                pictures.Dispose();
             }
         }
 
@@ -364,7 +415,8 @@ public static class PageExport
         double scale,
         ExportSettings settings,
         IProgress<ExportReport>? progress,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        GRContext? gpu)
     {
         canvas.Clear(SKColors.White);
         canvas.Save();
@@ -373,7 +425,7 @@ public static class PageExport
         {
             cancellation.ThrowIfCancellationRequested();
             progress?.Report(new ExportReport((i + 1d) / Math.Max(sheets.Count, 1), $"Sheet {i + 1} of {sheets.Count}: {sheets[i].Name}"));
-            DrawSheet(canvas, sheets[i], scale, page, cancellation);
+            DrawSheet(canvas, sheets[i], scale, page, cancellation, gpu: gpu);
         }
 
         canvas.Restore();
@@ -385,7 +437,8 @@ public static class PageExport
         double scale,
         ExportPage? page,
         CancellationToken cancellation,
-        Dictionary<string, SKImage>? cache = null)
+        SheetPictures? cache = null,
+        GRContext? gpu = null)
     {
         cancellation.ThrowIfCancellationRequested();
         if (sheet.Opacity <= 0 || sheet.PixelWidth <= 0 || sheet.PixelHeight <= 0)
@@ -408,20 +461,15 @@ public static class PageExport
             Math.Ceiling(Math.Max(sheet.PixelWidth, sheet.PixelHeight) * Math.Abs(sheet.Scale) * scale),
             1,
             MaxRasterSide);
-        var key = sheet.SourcePath + "|" + needed;
-        var owned = false;
-        if (cache is null || !cache.TryGetValue(key, out var image))
-        {
-            image = ImageFiles.DecodeLongSide(sheet.SourcePath, needed);
-            owned = cache is null;
-            if (cache is not null)
-                cache[key] = image;
-        }
+        var owned = cache is null;
+        var image = cache is null
+            ? ImageFiles.DecodeLongSide(sheet.SourcePath, needed)
+            : cache.Get(sheet.SourcePath, needed);
 
         try
         {
             if (MapFragment.IsWarped(sheet.HasCut ? sheet.Crop.Length : 4, sheet.Warp))
-                DrawWarpedImage(canvas, sheet, frame, image, scale);
+                DrawWarpedImage(canvas, sheet, frame, image, scale, gpu);
             else
                 DrawLocal(canvas, sheet, frame, image);
         }
@@ -454,7 +502,7 @@ public static class PageExport
             canvas.Restore();
     }
 
-    private static void DrawWarpedImage(SKCanvas canvas, ExportSheet sheet, SheetFrame frame, SKImage image, double outputScale)
+    private static void DrawWarpedImage(SKCanvas canvas, ExportSheet sheet, SheetFrame frame, SKImage image, double outputScale, GRContext? gpu)
     {
         var controls = Controls(sheet);
         var placed = new CropPoint[controls.Length];
@@ -483,26 +531,29 @@ public static class PageExport
         }
 
         WarpMesh.KeepSolid(placed, indices);
-        var info = new SKImageInfo(bitmapWidth, bitmapHeight, SKColorType.Rgba8888, SKAlphaType.Opaque);
-        using var surface = SKSurface.Create(info);
+        // Transparent, not white. The box around a warped sheet is larger than the triangles.
+        // One mesh, not a clip per triangle: antialiased clips leave white rays along the shared edges.
+        var info = new SKImageInfo(bitmapWidth, bitmapHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
+        using var surface = CreateSurface(info, gpu);
         var mesh = surface.Canvas;
-        mesh.Clear(SKColors.White);
-        var toBitmapX = bitmapWidth / spanX;
-        var toBitmapY = bitmapHeight / spanY;
-        for (var i = 0; i + 2 < indices.Count; i += 3)
+        mesh.Clear(SKColors.Transparent);
+        if (indices.Count >= 3)
         {
-            var a = indices[i];
-            var b = indices[i + 1];
-            var c = indices[i + 2];
-            DrawImageTriangle(
-                mesh,
-                image,
-                ImagePoint(sheet, image, controls[a]),
-                ImagePoint(sheet, image, controls[b]),
-                ImagePoint(sheet, image, controls[c]),
-                BitmapPoint(placed[a], minX, minY, toBitmapX, toBitmapY),
-                BitmapPoint(placed[b], minX, minY, toBitmapX, toBitmapY),
-                BitmapPoint(placed[c], minX, minY, toBitmapX, toBitmapY));
+            var vertices = new SKPoint[indices.Count];
+            var texture = new SKPoint[indices.Count];
+            var toBitmapX = bitmapWidth / spanX;
+            var toBitmapY = bitmapHeight / spanY;
+            for (var i = 0; i < indices.Count; i++)
+            {
+                var index = indices[i];
+                vertices[i] = BitmapPoint(placed[index], minX, minY, toBitmapX, toBitmapY);
+                texture[i] = ImagePoint(sheet, image, controls[index]);
+            }
+
+            using var shader = SKShader.CreateImage(image, SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.None));
+            using var meshPaint = new SKPaint { Shader = shader, IsAntialias = false };
+            using var verticesMesh = SKVertices.CreateCopy(SKVertexMode.Triangles, vertices, texture, null);
+            mesh.DrawVertices(verticesMesh, SKBlendMode.SrcOver, meshPaint);
         }
 
         using var shot = surface.Snapshot();
@@ -528,55 +579,64 @@ public static class PageExport
     private static SKPoint BitmapPoint(CropPoint placed, double minX, double minY, double scaleX, double scaleY) =>
         new((float)((placed.X - minX) * scaleX), (float)((placed.Y - minY) * scaleY));
 
-    private static void DrawImageTriangle(
-        SKCanvas canvas,
-        SKImage image,
-        SKPoint sourceA,
-        SKPoint sourceB,
-        SKPoint sourceC,
-        SKPoint destA,
-        SKPoint destB,
-        SKPoint destC)
+    private static SheetPicture? RenderPdfSheet(
+        ExportPage page,
+        IReadOnlyList<ExportSheet> sheets,
+        double scale,
+        float side,
+        ExportSettings settings,
+        GRContext? gpu,
+        IProgress<ExportReport>? progress,
+        int index,
+        int count,
+        CancellationToken cancellation)
     {
-        if (!TryAffine(sourceA, sourceB, sourceC, destA, destB, destC, out var matrix))
-            return;
+        cancellation.ThrowIfCancellationRequested();
+        progress?.Report(new ExportReport((index + 1d) / Math.Max(count, 1), $"Sheet {index + 1} of {count}: {sheets[index].Name}"));
+        if (!TryRenderSheet(page, sheets[index], scale, settings.JpegQuality, cancellation, gpu, out var jpeg, out var mask, out var width, out var height, out var left, out var top))
+            return null;
 
-        using var clip = new SKPath();
-        clip.MoveTo(destA);
-        clip.LineTo(destB);
-        clip.LineTo(destC);
-        clip.Close();
-        canvas.Save();
-        canvas.ClipPath(clip, SKClipOperation.Intersect, true);
-        canvas.SetMatrix(matrix);
-        canvas.DrawImage(image, 0, 0);
-        canvas.Restore();
+        var pdfX = (float)((left - page.X) * scale);
+        var pdfY = (float)(side - (top - page.Y) * scale - height);
+        return new SheetPicture(jpeg, mask, width, height, pdfX, pdfY);
     }
 
-    private static bool TryAffine(
-        SKPoint s0,
-        SKPoint s1,
-        SKPoint s2,
-        SKPoint d0,
-        SKPoint d1,
-        SKPoint d2,
-        out SKMatrix matrix)
+    private static int WorkerCount(ExportSettings settings) =>
+        settings.Threads ? Math.Max(1, Environment.ProcessorCount) : 1;
+
+    private static ExportGpu? OpenGpu(ExportSettings settings)
     {
-        var den = s0.X * (s1.Y - s2.Y) + s1.X * (s2.Y - s0.Y) + s2.X * (s0.Y - s1.Y);
-        if (Math.Abs(den) < 1e-3f)
+        if (!settings.Gpu || settings.Threads)
+            return null;
+
+        var gpu = ExportGpu.TryOpen();
+        if (gpu is null)
+            SessionLog.Action("export video card unavailable, using the cpu");
+        return gpu;
+    }
+
+    private static SKSurface CreateSurface(SKImageInfo info, GRContext? gpu)
+    {
+        if (gpu is not null)
         {
-            matrix = SKMatrix.Identity;
-            return false;
+            var created = SKSurface.Create(gpu, true, info);
+            if (created is not null)
+                return created;
         }
 
-        var scaleX = (d0.X * (s1.Y - s2.Y) + d1.X * (s2.Y - s0.Y) + d2.X * (s0.Y - s1.Y)) / den;
-        var skewX = (d0.X * (s2.X - s1.X) + d1.X * (s0.X - s2.X) + d2.X * (s1.X - s0.X)) / den;
-        var transX = d0.X - scaleX * s0.X - skewX * s0.Y;
-        var skewY = (d0.Y * (s1.Y - s2.Y) + d1.Y * (s2.Y - s0.Y) + d2.Y * (s0.Y - s1.Y)) / den;
-        var scaleY = (d0.Y * (s2.X - s1.X) + d1.Y * (s0.X - s2.X) + d2.Y * (s1.X - s0.X)) / den;
-        var transY = d0.Y - skewY * s0.X - scaleY * s0.Y;
-        matrix = new SKMatrix(scaleX, skewX, transX, skewY, scaleY, transY, 0, 0, 1);
-        return true;
+        return SKSurface.Create(info);
+    }
+
+    private static SKBitmap RasterCopy(SKImage image, SKImageInfo info)
+    {
+        var bitmap = new SKBitmap(info);
+        if (!image.ReadPixels(bitmap.Info, bitmap.GetPixels(), bitmap.RowBytes, 0, 0))
+        {
+            bitmap.Dispose();
+            throw new InvalidDataException("Cannot read the export.");
+        }
+
+        return bitmap;
     }
 
     private static ExportKind KindOf(string path)
@@ -720,6 +780,44 @@ public static class PageExport
     }
 }
 
+sealed class SheetPictures : IDisposable
+{
+    private readonly Dictionary<string, SKImage> _images = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+
+    public SKImage Get(string path, int needed)
+    {
+        var key = path + "|" + needed;
+        lock (_gate)
+        {
+            if (_images.TryGetValue(key, out var found))
+                return found;
+        }
+
+        var image = ImageFiles.DecodeLongSide(path, needed);
+        lock (_gate)
+        {
+            if (_images.TryGetValue(key, out var found))
+            {
+                image.Dispose();
+                return found;
+            }
+
+            _images[key] = image;
+            return image;
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var image in _images.Values)
+            image.Dispose();
+        _images.Clear();
+    }
+}
+
+sealed record SheetPicture(byte[] Jpeg, byte[] Mask, int Width, int Height, float X, float Y);
+
 sealed class PdfDocument
 {
     private readonly float _width;
@@ -762,8 +860,9 @@ sealed class PdfDocument
         var content = Contents();
         var contentBytes = Encoding.ASCII.GetBytes(content);
         var page = Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_width:0.###} {_height:0.###}] /Contents 4 0 R /Resources {resources} >>"));
+        var contentDict = Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"<< /Length {contentBytes.Length} >>"));
         WriteObject(stream, offsets, 3, page);
-        WriteStream(stream, offsets, 4, "<< /Length "u8, contentBytes, " >>"u8);
+        WriteStream(stream, offsets, 4, contentDict, contentBytes);
         for (var i = 0; i < _jpegs.Count; i++)
         {
             var place = _places[i];
@@ -774,9 +873,9 @@ sealed class PdfDocument
                 $"<< /Type /XObject /Subtype /Image /Width {place.Width} /Height {place.Height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /SMask {maskId} 0 R /Length {_jpegs[i].Length} >>"));
             var maskDict = Encoding.ASCII.GetBytes(string.Create(
                 CultureInfo.InvariantCulture,
-                $"<< /Type /XObject /Subtype /Image /Width {place.Width} /Height {place.Height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length {_masks[i].Length} >>"));
-            WriteStream(stream, offsets, imageId, imageDict, _jpegs[i], ""u8);
-            WriteStream(stream, offsets, maskId, maskDict, _masks[i], ""u8);
+                $"<< /Type /XObject /Subtype /Image /Width {place.Width} /Height {place.Height} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Matte [1 1 1] /Length {_masks[i].Length} >>"));
+            WriteStream(stream, offsets, imageId, imageDict, _jpegs[i]);
+            WriteStream(stream, offsets, maskId, maskDict, _masks[i]);
         }
 
         var xref = stream.Position;
@@ -815,13 +914,12 @@ sealed class PdfDocument
         stream.Write("\nendobj\n"u8);
     }
 
-    private static void WriteStream(Stream stream, long[] offsets, int id, ReadOnlySpan<byte> dictBefore, ReadOnlySpan<byte> data, ReadOnlySpan<byte> dictAfter)
+    private static void WriteStream(Stream stream, long[] offsets, int id, ReadOnlySpan<byte> dictionary, ReadOnlySpan<byte> data)
     {
         offsets[id] = stream.Position;
         var prefix = Encoding.ASCII.GetBytes($"{id} 0 obj\n");
         stream.Write(prefix);
-        stream.Write(dictBefore);
-        stream.Write(dictAfter);
+        stream.Write(dictionary);
         stream.Write("\nstream\n"u8);
         stream.Write(data);
         stream.Write("\nendstream\nendobj\n"u8);

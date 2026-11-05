@@ -41,9 +41,29 @@ public partial class ExportWindow : Window
 
     private void UpdateHint()
     {
+        ShowQualitySizes();
         Hint.Text = FormatBox.SelectedIndex == 3
-            ? "A folder of map tiles and a page you open in a browser. This stays light when the project has many sheets."
-            : "PDF keeps one picture per sheet. JPEG and PNG are a single flattened picture at the size you pick.";
+            ? "Tiles follow the white square. Fine keeps one scan pixel per tile pixel at the closest zoom. Threads paint tiles at the same time. The video card is used instead of threads when that box is the only one checked."
+            : "PDF keeps one picture per sheet. JPEG and PNG are one picture of the white square, at most 8192 px on a side. Threads render PDF sheets together. The video card is used when threads are off.";
+    }
+
+    private void ShowQualitySizes()
+    {
+        if (QualityBox is null || _map is null)
+            return;
+
+        var page = ExportPage.TryFrom(_map.Sheets, out var frame) ? frame.Size : 1;
+        var tiles = FormatBox.SelectedIndex == 3;
+        var names = new[] { "Screen", "Print", "Fine" };
+        var presets = new[] { ExportSettings.Screen, ExportSettings.Print, ExportSettings.Fine };
+        for (var i = 0; i < presets.Length; i++)
+        {
+            var side = tiles
+                ? PageExport.TileSide(page, presets[i].LongSide)
+                : PageExport.OutputSide(page, presets[i].LongSide);
+            if (QualityBox.Items[i] is ComboBoxItem item)
+                item.Content = $"{names[i]}, {side} px";
+        }
     }
 
     private async Task Start()
@@ -55,7 +75,11 @@ public partial class ExportWindow : Window
             3 => ExportKind.Tiles,
             _ => ExportKind.Pdf,
         };
-        var settings = ExportSettings.For(kind, QualityBox.SelectedIndex);
+        var settings = ExportSettings.For(kind, QualityBox.SelectedIndex) with
+        {
+            Threads = ThreadsBox.IsChecked == true,
+            Gpu = GpuBox.IsChecked == true && ThreadsBox.IsChecked != true,
+        };
         var name = ProjectName();
         string? path;
         if (kind == ExportKind.Tiles)

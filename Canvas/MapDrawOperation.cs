@@ -91,6 +91,7 @@ sealed class MapDrawOperation : ICustomDrawOperation
         if (feature is null || Bounds.Width <= 1 || Bounds.Height <= 1 || _zoom <= 0)
             return;
 
+        SessionLog.Trace($"frame version={_version} sheets={_sheets.Length} zoom={_zoom:0.####}");
         using var lease = feature.Lease();
         var canvas = lease.SkCanvas;
         canvas.Save();
@@ -290,12 +291,16 @@ sealed class MapDrawOperation : ICustomDrawOperation
         if (!WarpMesh.Triangulate(controls, indices))
             return false;
 
+        var triangleCount = indices.Count;
         WarpMesh.KeepSolid(placed, indices);
+        if (indices.Count != triangleCount)
+            SessionLog.Once($"warp-drop:{sheet.Label}:{triangleCount}:{indices.Count}", $"warp mesh {sheet.Label} dropped triangles {triangleCount / 3}->{indices.Count / 3}");
         var image = sheet.Lease?.Image;
         if (image is not null && indices.Count >= 3 && sheet.Width > 0 && sheet.Height > 0)
         {
             var vertices = new SKPoint[indices.Count];
             var texture = new SKPoint[indices.Count];
+            var finite = true;
             for (var i = 0; i < indices.Count; i++)
             {
                 var index = indices[i];
@@ -304,6 +309,9 @@ sealed class MapDrawOperation : ICustomDrawOperation
                 texture[i] = new SKPoint(
                     (float)(control.X / sheet.Width * image.Width),
                     (float)(control.Y / sheet.Height * image.Height));
+                if (!float.IsFinite(vertices[i].X) || !float.IsFinite(vertices[i].Y)
+                    || !float.IsFinite(texture[i].X) || !float.IsFinite(texture[i].Y))
+                    finite = false;
             }
 
             using var shader = SKShader.CreateImage(image, SKShaderTileMode.Clamp, SKShaderTileMode.Clamp, ImageSampling);
@@ -314,13 +322,26 @@ sealed class MapDrawOperation : ICustomDrawOperation
                 ColorFilter = color,
                 IsAntialias = true,
             };
-            try
+            if (!finite)
             {
-                canvas.DrawVertices(SKVertexMode.Triangles, vertices, texture, null, paint);
+                SessionLog.Fault($"warp draw non-finite mesh {sheet.Label} triangles={indices.Count / 3}");
             }
-            catch (Exception)
+            else
             {
-                // A bad mesh must not take the process down. The outline is still drawn below.
+                try
+                {
+                    SessionLog.Trace($"mesh {sheet.Label} triangles={indices.Count / 3} image={image.Width}x{image.Height}");
+                    // Own the SKVertices. The array overload of DrawVertices creates one that nothing keeps
+                    // alive, so a GC during the native call can finalize it before Skia takes its reference,
+                    // and the GPU flush then frees it a second time (heap corruption 0xC0000374).
+                    using var mesh = SKVertices.CreateCopy(SKVertexMode.Triangles, vertices, texture, null);
+                    canvas.DrawVertices(mesh, SKBlendMode.Modulate, paint);
+                }
+                catch (Exception ex)
+                {
+                    // A bad mesh must not take the process down. The outline is still drawn below.
+                    SessionLog.Fault($"warp draw {sheet.Label} triangles={indices.Count / 3}", ex);
+                }
             }
         }
         else if (image is null)

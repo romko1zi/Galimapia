@@ -3,7 +3,7 @@
         x:Class="Galimapia.Views.ExportWindow"
         Title="Export"
         Width="460"
-        Height="340"
+        Height="430"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="#1C1B19">
@@ -22,6 +22,8 @@
                 <ComboBoxItem Content="Print, 4096 px" />
                 <ComboBoxItem Content="Fine, 8192 px" />
             </ComboBox>
+            <CheckBox x:Name="ThreadsBox" Content="Several CPU threads" IsChecked="True" Foreground="#C8C2B8" />
+            <CheckBox x:Name="GpuBox" Content="Video card" Foreground="#C8C2B8" />
             <TextBlock x:Name="Hint" TextWrapping="Wrap" FontFamily="Consolas" FontSize="13" Foreground="#8A8378" />
             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                 <Button x:Name="CancelSetupButton" Content="Cancel" MinWidth="88" />

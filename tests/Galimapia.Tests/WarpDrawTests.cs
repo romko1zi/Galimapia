@@ -1,9 +1,21 @@
+using System.Reflection;
+using System.Reflection.Emit;
+using Galimapia.Canvas;
 using SkiaSharp;
 
 namespace Galimapia.Tests;
 
 public class WarpDrawTests
 {
+    [Fact]
+    public void The_app_draws_vertices_only_from_an_SKVertices_it_owns()
+    {
+        var calls = CallsTo(typeof(MapScene).Assembly, typeof(SKCanvas), nameof(SKCanvas.DrawVertices));
+
+        Assert.NotEmpty(calls);
+        Assert.All(calls, call => Assert.Equal(typeof(SKVertices), call.GetParameters()[0].ParameterType));
+    }
+
     [Fact]
     public void Four_meshes_meeting_at_one_point_do_not_crash()
     {
@@ -72,6 +84,51 @@ public class WarpDrawTests
         paint.Dispose();
         using var again = new SKPaint { ColorFilter = filter };
         Assert.NotNull(again);
+    }
+
+    private static List<MethodBase> CallsTo(Assembly assembly, Type owner, string name)
+    {
+        const BindingFlags all = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly;
+        var opcodes = typeof(OpCodes).GetFields(BindingFlags.Public | BindingFlags.Static)
+            .Select(field => (OpCode)field.GetValue(null)!)
+            .ToDictionary(code => (ushort)code.Value);
+        var found = new List<MethodBase>();
+        foreach (var type in assembly.GetTypes())
+        {
+            var typeArguments = type.IsGenericType ? type.GetGenericArguments() : null;
+            foreach (var method in type.GetMethods(all).Cast<MethodBase>().Concat(type.GetConstructors(all)))
+            {
+                var il = method.GetMethodBody()?.GetILAsByteArray();
+                if (il is null)
+                    continue;
+
+                var methodArguments = method.IsGenericMethod ? method.GetGenericArguments() : null;
+                var i = 0;
+                while (i < il.Length)
+                {
+                    var value = il[i] == 0xFE ? (ushort)(0xFE00 | il[i + 1]) : il[i];
+                    i += il[i] == 0xFE ? 2 : 1;
+                    var code = opcodes[value];
+                    if (code.OperandType == OperandType.InlineMethod
+                        && method.Module.ResolveMethod(BitConverter.ToInt32(il, i), typeArguments, methodArguments) is { } target
+                        && target.DeclaringType == owner
+                        && target.Name == name)
+                        found.Add(target);
+
+                    i += code.OperandType switch
+                    {
+                        OperandType.InlineNone => 0,
+                        OperandType.ShortInlineBrTarget or OperandType.ShortInlineI or OperandType.ShortInlineVar => 1,
+                        OperandType.InlineVar => 2,
+                        OperandType.InlineI8 or OperandType.InlineR => 8,
+                        OperandType.InlineSwitch => 4 + 4 * BitConverter.ToInt32(il, i),
+                        _ => 4,
+                    };
+                }
+            }
+        }
+
+        return found;
     }
 
     private static SKImage MakeImage()

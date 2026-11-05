@@ -140,6 +140,7 @@ public class MapCanvas : Control
         _saving = true;
         try
         {
+            SessionLog.Action($"save {folder}");
             _scene.SetNotice("Saving");
             var sheets = _scene.SnapshotSheets();
             ExportPage? page = ExportPage.TryFrom(_scene.Fragments, out var frame) ? frame : null;
@@ -155,6 +156,7 @@ public class MapCanvas : Control
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
+            SessionLog.Fault($"save {folder}", ex);
             _scene.SetNotice(ex.Message);
             return false;
         }
@@ -182,18 +184,25 @@ public class MapCanvas : Control
         _exporting = true;
         try
         {
+            var side = settings.Kind == ExportKind.Tiles
+                ? PageExport.TileSide(page.Size, settings.LongSide)
+                : PageExport.OutputSide(page.Size, settings.LongSide);
+            SessionLog.Action($"export {settings.Kind} {side}px {path}");
             _scene.SetNotice("Exporting");
             await Task.Run(() => PageExport.Write(path, page, sheets, settings, progress, cancellation), cancellation);
             await _scene.RunOnUi(() => _scene.SetNotice("Exported"));
+            SessionLog.Action("export finished");
             return true;
         }
         catch (OperationCanceledException)
         {
+            SessionLog.Action("export cancelled");
             await _scene.RunOnUi(() => _scene.SetNotice("Export cancelled"));
             return false;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
+            SessionLog.Fault($"export {path}", ex);
             await _scene.RunOnUi(() => _scene.SetNotice(ex.Message));
             return false;
         }
@@ -207,6 +216,7 @@ public class MapCanvas : Control
     {
         try
         {
+            SessionLog.Action($"open {folder}");
             var document = await Task.Run(() => ProjectFile.Read(folder));
             await _scene.RunOnUi(() => _scene.Install(document));
             _selected = null;
@@ -220,10 +230,12 @@ public class MapCanvas : Control
             _camera.Zoom = Math.Clamp(document.Zoom, Camera.MinZoom, Camera.MaxZoom);
             InvalidateVisual();
             ViewChanged?.Invoke(this, EventArgs.Empty);
+            SessionLog.Action($"opened {SheetCount} sheets");
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException)
         {
+            SessionLog.Fault($"open {folder}", ex);
             _scene.SetNotice(ex.Message);
             return false;
         }
@@ -361,6 +373,7 @@ public class MapCanvas : Control
 
         var hit = _scene.HitTest(world.X, world.Y);
         _selected = hit;
+        SessionLog.Action($"select {SheetName(hit)}");
         if (hit is not null)
         {
             _scene.BeginEdit(hit);
@@ -578,6 +591,7 @@ public class MapCanvas : Control
 
         EndPan();
         EndSheetGesture();
+        SessionLog.Action($"drop {paths.Count} files");
         var position = e.GetPosition(this);
         var world = _camera.ScreenToWorld(position.X, position.Y, Bounds.Width, Bounds.Height);
         _ = _scene.ImportAsync(paths, world.X, world.Y, bounds =>
@@ -767,6 +781,7 @@ public class MapCanvas : Control
         if (Selected is not { } sheet)
             return;
 
+        SessionLog.Action($"rotate step {delta} {sheet.Name}");
         CommitRotation(sheet.RotationDegrees + delta);
     }
 
@@ -781,6 +796,7 @@ public class MapCanvas : Control
         if (_tool == tool)
             tool = MapTool.None;
 
+        SessionLog.Action($"tool {tool}");
         if (_gesture == Gesture.Warp)
             EndWarpGesture(commit: false);
         if (_gesture is Gesture.CropRect or Gesture.CropPoint)
@@ -822,6 +838,7 @@ public class MapCanvas : Control
             return;
 
         EndActiveGesture();
+        SessionLog.Action($"rotate {degrees} {sheet.Name}");
         _scene.BeginEdit(sheet);
         _scene.SetRotation(sheet, degrees);
         _scene.EndEdit();
@@ -833,6 +850,7 @@ public class MapCanvas : Control
             return;
 
         EndSheetGesture();
+        SessionLog.Action($"mirror {sheet.Name}");
         _scene.BeginEdit(sheet);
         _scene.SetFlipX(sheet, !sheet.FlipX);
         _scene.EndEdit();
@@ -844,6 +862,7 @@ public class MapCanvas : Control
             return;
 
         EndSheetGesture();
+        SessionLog.Action($"reset {sheet.Name}");
         _scene.ResetAppearance(sheet);
     }
 
@@ -865,6 +884,8 @@ public class MapCanvas : Control
     {
         if (Selected is not { } sheet || !_scene.ConfirmDraft(sheet))
             return;
+
+        SessionLog.Action($"crop confirm {sheet.Name}");
 
         _gesture = Gesture.None;
         _polyOpen = false;
@@ -939,6 +960,7 @@ public class MapCanvas : Control
             EndWarpGesture(commit: false);
         }
 
+        SessionLog.Action($"delete {sheet.Name}");
         return _scene.Delete(sheet);
     }
 
@@ -947,6 +969,7 @@ public class MapCanvas : Control
         if (Selected is not { } sheet)
             return false;
 
+        SessionLog.Action($"forward {sheet.Name}");
         return _scene.BringForward(sheet);
     }
 
@@ -955,11 +978,13 @@ public class MapCanvas : Control
         if (Selected is not { } sheet)
             return false;
 
+        SessionLog.Action($"backward {sheet.Name}");
         return _scene.SendBackward(sheet);
     }
 
     private bool UndoKey()
     {
+        SessionLog.Action("undo");
         var changed = _scene.Undo();
         if (_gesture is Gesture.Move or Gesture.Scale or Gesture.Rotate or Gesture.CropRect or Gesture.CropPoint or Gesture.Warp)
         {
@@ -979,6 +1004,7 @@ public class MapCanvas : Control
 
     private bool RedoKey()
     {
+        SessionLog.Action("redo");
         var changed = _scene.Redo();
         if (_gesture is Gesture.Move or Gesture.Scale or Gesture.Rotate or Gesture.CropRect or Gesture.CropPoint or Gesture.Warp)
         {
@@ -1007,7 +1033,9 @@ public class MapCanvas : Control
             return;
         }
 
-        var hit = _scene.HitTestFrame(world.X, world.Y);
+        var revealed = Selected is { } selected && ShowsHiddenMargin(selected) ? selected : null;
+        var hit = _scene.HitTestCrop(world.X, world.Y, revealed);
+        SessionLog.Action($"crop {ToolName()} hit={SheetName(hit)} selected={SheetName(Selected)} revealed={SheetName(revealed)}");
         if (hit is null || !hit.Frame.TryToLocal(world.X, world.Y, out var localX, out var localY))
         {
             e.Handled = true;
@@ -1109,6 +1137,7 @@ public class MapCanvas : Control
                 _warpPress = world;
                 _scene.BeginWarp(selected);
                 _gesture = Gesture.Warp;
+                SessionLog.Action($"warp grab {selected.Name} #{index}");
                 e.Pointer.Capture(this);
                 e.Handled = true;
                 return;
@@ -1151,6 +1180,7 @@ public class MapCanvas : Control
 
         _glueX = targetX;
         _glueY = targetY;
+        SessionLog.Move($"warp {sheet.Name} #{_warpIndex} {targetX:0.#},{targetY:0.#} glue={_glue}");
         if (!double.IsFinite(targetX) || !double.IsFinite(targetY))
             return;
         if (!sheet.Frame.TryToLocal(targetX, targetY, out var localX, out var localY))
@@ -1230,6 +1260,7 @@ public class MapCanvas : Control
         _gesture = Gesture.None;
         _warpIndex = -1;
         _glue = false;
+        SessionLog.Action($"warp end commit={commit} sheet={SheetName(_selected)}");
         if (commit)
             _scene.EndWarp();
         else
@@ -1244,6 +1275,7 @@ public class MapCanvas : Control
         if (hit is null || !hit.Frame.TryToLocal(world.X, world.Y, out var localX, out var localY))
             return;
 
+        SessionLog.Action($"join {_alignCount} {hit.Name}");
         if (_alignCount == 0)
         {
             _alignFixed = hit;
@@ -1420,8 +1452,11 @@ public class MapCanvas : Control
         if (_gesture is not (Gesture.Move or Gesture.Scale or Gesture.Rotate))
             return;
 
+        var ended = _gesture;
+        var sheet = _selected;
         _gesture = Gesture.None;
         _scene.EndEdit();
+        SessionLog.Action($"{ended} end {SheetName(sheet)}");
         RestoreToolCursor();
     }
 
@@ -1430,7 +1465,9 @@ public class MapCanvas : Control
         if (_gesture is not (Gesture.CropRect or Gesture.CropPoint))
             return;
 
+        var ended = _gesture;
         _gesture = Gesture.None;
+        SessionLog.Action($"crop gesture {ended} commit={commit} sheet={SheetName(Selected)}");
         if (!commit)
         {
             _scene.CancelDraft();
@@ -1472,4 +1509,11 @@ public class MapCanvas : Control
 
     private static string Pair(double x, double y) =>
         string.Format(Culture, "{0,12:0.0}, {1,12:0.0}", x, y);
+
+    private static bool ShowsHiddenMargin(MapFragment sheet) =>
+        sheet.Draft.Count > 0 && !(sheet.HasCut && CropPolygon.Same(sheet.Draft, sheet.Crop));
+
+    private string ToolName() => _tool.ToString();
+
+    private static string SheetName(MapFragment? sheet) => sheet?.Name ?? "none";
 }

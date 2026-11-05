@@ -294,6 +294,39 @@ public class SheetEditTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task A_cropped_front_sheet_does_not_hide_the_sheet_in_its_old_margin()
+    {
+        var first = WriteScan(Path.Combine(_root, "back.jpg"));
+        var second = WriteScan(Path.Combine(_root, "front.jpg"));
+        var scene = new MapScene(new LodStore(Path.Combine(_root, "lod")), new ImageCache(8 * 1024 * 1024), _ui.Invoke);
+        try
+        {
+            await scene.ImportAsync([first, second], 0, 0);
+            await scene.RunOnUi(() =>
+            {
+                var back = scene.Fragments[0];
+                var front = scene.Fragments[1];
+                scene.MoveTo(back, 0, 0);
+                scene.MoveTo(front, 0, 0);
+                front.Crop.Add(new CropPoint(15, 0));
+                front.Crop.Add(new CropPoint(30, 0));
+                front.Crop.Add(new CropPoint(30, 20));
+                front.Crop.Add(new CropPoint(15, 20));
+                front.CropCommitted = true;
+
+                Assert.Same(front, scene.HitTestFrame(5, 10));
+                Assert.Same(back, scene.HitTestCrop(5, 10, null));
+                Assert.Same(front, scene.HitTestCrop(5, 10, front));
+                Assert.Same(front, scene.HitTestCrop(22, 10, null));
+            });
+        }
+        finally
+        {
+            await scene.RunOnUi(scene.Dispose);
+        }
+    }
+
     public void Dispose()
     {
         _ui.Dispose();

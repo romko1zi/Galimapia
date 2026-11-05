@@ -110,6 +110,7 @@ public partial class MainWindow : Window
             return;
         }
 
+        SessionLog.Action("window closing");
         e.Cancel = true;
         await Autosave();
         _allowClose = true;

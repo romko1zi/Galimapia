@@ -288,6 +288,25 @@ public sealed class MapScene : IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Crop clicks use the visible shape. <paramref name="revealed"/> is the sheet whose hidden
+    /// page is on screen because a new outline is being drawn, so that page can still be hit.
+    /// </summary>
+    public MapFragment? HitTestCrop(double worldX, double worldY, MapFragment? revealed)
+    {
+        for (var i = _fragments.Count - 1; i >= 0; i--)
+        {
+            var fragment = _fragments[i];
+            var hit = ReferenceEquals(fragment, revealed)
+                ? fragment.ContainsFrame(worldX, worldY)
+                : fragment.ContainsWorld(worldX, worldY);
+            if (hit)
+                return fragment;
+        }
+
+        return null;
+    }
+
     public void BeginEdit(MapFragment fragment)
     {
         if (!_fragments.Contains(fragment))
