@@ -1,0 +1,328 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:canvas="using:Galimapia.Canvas"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        x:Class="Galimapia.Views.MainWindow"
+        Icon="/Assets/icons/icon.png"
+        Title="Galimapia"
+        Width="1200"
+        Height="800"
+        MinWidth="640"
+        MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        Background="#1C1B19">
+
+    <Grid RowDefinitions="*,Auto,Auto">
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+            <canvas:MapCanvas x:Name="Map" />
+            <Border x:Name="LayerPane" Grid.Column="1" Width="280" Background="#211F1D">
+                <Border.Styles>
+                    <Style Selector="TextBlock">
+                        <Setter Property="FontFamily" Value="Consolas" />
+                        <Setter Property="FontSize" Value="13" />
+                        <Setter Property="Foreground" Value="#C8C2B8" />
+                    </Style>
+                </Border.Styles>
+                <DockPanel>
+                    <Border x:Name="LayerHeader" DockPanel.Dock="Top" Background="#262421" Padding="8,6">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                            <Image x:Name="LayerIcon" Width="18" Height="18" VerticalAlignment="Center"
+                                   Source="avares://Galimapia/Assets/icons/layers.png" />
+                            <TextBlock x:Name="LayerTitle" Grid.Column="1" Margin="8,0,0,0"
+                                       VerticalAlignment="Center" Text="Layers" />
+                            <Button x:Name="LayerUpButton" Grid.Column="2" Width="28" Height="28"
+                                    Padding="0" Background="Transparent" BorderThickness="0"
+                                    ToolTip.Tip="Bring forward">
+                                <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/up.png" />
+                            </Button>
+                            <Button x:Name="LayerDownButton" Grid.Column="3" Width="28" Height="28"
+                                    Padding="0" Background="Transparent" BorderThickness="0"
+                                    ToolTip.Tip="Send backward">
+                                <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/down.png" />
+                            </Button>
+                            <Button x:Name="LayerToggle" Grid.Column="4" Width="28" Height="28"
+                                    Padding="0" Background="Transparent" BorderThickness="0"
+                                    HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                                    Content="›" Foreground="#C8C2B8" FontSize="14"
+                                    ToolTip.Tip="Collapse layers" />
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="LayerHint" DockPanel.Dock="Top" Margin="12,8,12,8"
+                               TextWrapping="Wrap" Foreground="#8A8378"
+                               Text="Top card is in front. Drag a card to reorder." />
+                    <ScrollViewer x:Name="LayerScroll" HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="LayerList" Margin="0,4,0,8" />
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="1" Background="#262421" Padding="12,6">
+            <Border.Styles>
+                <Style Selector="TextBlock">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="Foreground" Value="#C8C2B8" />
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+                <Style Selector="Button.tool">
+                    <Setter Property="MinWidth" Value="28" />
+                    <Setter Property="Height" Value="28" />
+                    <Setter Property="Padding" Value="6,2" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="CornerRadius" Value="4" />
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                    <Setter Property="Foreground" Value="#E6D7C3" />
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+                <Style Selector="Button.tool.on">
+                    <Setter Property="Background" Value="#6B5432" />
+                </Style>
+            </Border.Styles>
+            <Grid ColumnDefinitions="*,Auto">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                <Button x:Name="ProjectsButton" Classes="tool" ToolTip.Tip="Projects">
+                                    <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/welcome-folder.png" />
+                                </Button>
+                                <Button x:Name="SaveButton" Classes="tool" MinWidth="52" Content="Save" ToolTip.Tip="Save the project" />
+                                <Button x:Name="ExportButton" Classes="tool" MinWidth="52" Content="Export" ToolTip.Tip="Export the map as PDF, JPEG, or PNG" />
+                                <Button x:Name="AboutButton" Classes="tool" MinWidth="52" Content="About" ToolTip.Tip="About Galimapia" />
+                            </StackPanel>
+                        </Border>
+                        <TextBlock x:Name="SheetText" MaxWidth="220" TextTrimming="CharacterEllipsis" Text="No sheet" />
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                <Button x:Name="RotateLeftButton" Classes="tool" ToolTip.Tip="Rotate left 90°">
+                                    <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/rotate.png" />
+                                </Button>
+                                <Button x:Name="RotateRightButton" Classes="tool" ToolTip.Tip="Rotate right 90°">
+                                    <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/rotate-cw.png" />
+                                </Button>
+                                <Button x:Name="Rotate0Button" Classes="tool" Width="40" Content="0" ToolTip.Tip="Rotate to 0°" />
+                                <Button x:Name="Rotate90Button" Classes="tool" Width="40" Content="90" ToolTip.Tip="Rotate to 90°" />
+                                <Button x:Name="Rotate180Button" Classes="tool" Width="40" Content="180" ToolTip.Tip="Rotate to 180°" />
+                                <Button x:Name="Rotate270Button" Classes="tool" Width="40" Content="270" ToolTip.Tip="Rotate to 270°" />
+                                <Button x:Name="MirrorButton" Classes="tool" ToolTip.Tip="Mirror horizontally">
+                                    <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/mirror.png" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <Button x:Name="ResetButton" Classes="tool" ToolTip.Tip="Reset rotation, scale, and mirror">
+                                <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/reset.png" />
+                            </Button>
+                        </Border>
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <StackPanel Orientation="Horizontal" Spacing="2">
+                                <Button x:Name="CropRectButton" Classes="tool" ToolTip.Tip="Rectangle crop. The page stays whole until you apply it.">
+                                    <Border Width="16" Height="16" Background="Transparent">
+                                        <Border Width="12" Height="9" VerticalAlignment="Center" HorizontalAlignment="Center"
+                                                BorderBrush="#E6D7C3" BorderThickness="1.5" Background="Transparent" />
+                                    </Border>
+                                </Button>
+                                <Button x:Name="CropPolyButton" Classes="tool" ToolTip.Tip="Outline crop. Click corners. Lines cannot cross. The page stays whole until you apply it.">
+                                    <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/crop.png" />
+                                </Button>
+                                <Button x:Name="CropApplyButton" Classes="tool" IsVisible="False" ToolTip.Tip="Apply the crop. The page outside is cut, and the handles move to the new edges.">
+                                    <TextBlock Text="✓" FontSize="13" Foreground="#8FDB6A"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <Button x:Name="JoinButton" Classes="tool" MinWidth="52" Content="Join" ToolTip.Tip="Join by two points. Two spots on the sheet that stays, then the same two on the sheet that moves." />
+                        </Border>
+                        <Border Background="#322F2C" CornerRadius="8" Padding="3">
+                            <Button x:Name="WarpButton" Classes="tool" MinWidth="52" Content="Warp" ToolTip.Tip="Stretch corners. A cropped sheet stretches at each crop point. This does not move the sheet." />
+                        </Border>
+                        <TextBlock x:Name="ToolHint" MaxWidth="280" MaxHeight="28"
+                                   TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" Foreground="#E7C07A" />
+                        <TextBlock Text="Opacity" />
+                        <Slider x:Name="OpacitySlider"
+                                Width="120"
+                                MinHeight="32"
+                                Minimum="0"
+                                Maximum="100"
+                                Value="100"
+                                IsEnabled="False"
+                                VerticalAlignment="Center" />
+                        <TextBlock x:Name="OpacityText" MinWidth="48" Text="100%" />
+                        <TextBlock Text="Bright" />
+                        <Slider x:Name="BrightSlider"
+                                Width="88"
+                                MinHeight="32"
+                                Minimum="-100"
+                                Maximum="100"
+                                Value="0"
+                                IsEnabled="False"
+                                VerticalAlignment="Center" />
+                        <TextBlock x:Name="BrightText" MinWidth="40" Text="0" />
+                        <TextBlock Text="Contrast" />
+                        <Slider x:Name="ContrastSlider"
+                                Width="88"
+                                MinHeight="32"
+                                Minimum="0"
+                                Maximum="200"
+                                Value="100"
+                                IsEnabled="False"
+                                VerticalAlignment="Center" />
+                        <TextBlock x:Name="ContrastText" MinWidth="40" Text="100" />
+                        <TextBlock Text="Tint" />
+                        <Slider x:Name="HueSlider"
+                                Width="88"
+                                MinHeight="32"
+                                Minimum="-180"
+                                Maximum="180"
+                                Value="0"
+                                IsEnabled="False"
+                                VerticalAlignment="Center" />
+                        <TextBlock x:Name="HueText" MinWidth="40" Text="0" />
+                        <TextBlock x:Name="PoseText" MinWidth="140" />
+                    </StackPanel>
+                </ScrollViewer>
+                <Border Grid.Column="1" Background="#322F2C" CornerRadius="8" Padding="3" Margin="8,0,0,0">
+                    <Button x:Name="DeleteButton" Classes="tool" ToolTip.Tip="Delete sheet">
+                        <Image Width="16" Height="16" Source="avares://Galimapia/Assets/icons/delete.png" />
+                    </Button>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2" Background="#2A2826" Padding="12,8">
+            <Border.Styles>
+                <Style Selector="TextBlock">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="Foreground" Value="#C8C2B8" />
+                    <Setter Property="VerticalAlignment" Value="Center" />
+                </Style>
+            </Border.Styles>
+            <Grid ColumnDefinitions="*,Auto">
+                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                    <StackPanel Orientation="Horizontal" Spacing="18">
+                        <TextBlock x:Name="ZoomText" MinWidth="112" />
+                        <TextBlock x:Name="CenterText" MinWidth="250" />
+                        <TextBlock x:Name="CursorText" MinWidth="250" />
+                        <TextBlock x:Name="SheetsText" MaxWidth="360" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </ScrollViewer>
+                <TextBlock Grid.Column="1"
+                           Margin="24,0,0,0"
+                           VerticalAlignment="Center"
+                           Text="Middle mouse pan, wheel zoom, 0 = 100%" />
+            </Grid>
+        </Border>
+
+        <Border x:Name="Welcome" Grid.RowSpan="3" Background="#1C1B19" IsVisible="True">
+            <Border.Styles>
+                <Style Selector="TextBlock">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="Foreground" Value="#C8C2B8" />
+                </Style>
+                <Style Selector="Button.welcome">
+                    <Setter Property="Height" Value="48" />
+                    <Setter Property="Padding" Value="16,0" />
+                    <Setter Property="Background" Value="#262421" />
+                    <Setter Property="BorderBrush" Value="#6B5432" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="CornerRadius" Value="10" />
+                    <Setter Property="Foreground" Value="#E6D7C3" />
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                </Style>
+                <Style Selector="Button.compact">
+                    <Setter Property="Height" Value="32" />
+                    <Setter Property="MinWidth" Value="72" />
+                    <Setter Property="Padding" Value="12,0" />
+                    <Setter Property="Background" Value="#262421" />
+                    <Setter Property="BorderBrush" Value="#6B5432" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="CornerRadius" Value="8" />
+                    <Setter Property="Foreground" Value="#E6D7C3" />
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="HorizontalContentAlignment" Value="Center" />
+                    <Setter Property="VerticalContentAlignment" Value="Center" />
+                </Style>
+                <Style Selector="Button.welcome:pointerover, Button.compact:pointerover">
+                    <Setter Property="Background" Value="#3C3428" />
+                </Style>
+                <Style Selector="TextBox">
+                    <Setter Property="FontFamily" Value="Consolas" />
+                    <Setter Property="FontSize" Value="13" />
+                    <Setter Property="Background" Value="#2E2B28" />
+                    <Setter Property="Foreground" Value="#E6D7C3" />
+                    <Setter Property="BorderBrush" Value="#6B5432" />
+                    <Setter Property="Padding" Value="8,6" />
+                </Style>
+            </Border.Styles>
+            <Grid RowDefinitions="Auto,*">
+                <Button x:Name="WelcomeBack" Grid.Row="0" Classes="compact" HorizontalAlignment="Left"
+                        Margin="20,16,0,0" Content="Back" IsVisible="False" />
+                <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="560" HorizontalAlignment="Center" Margin="24,24,24,32" Spacing="0">
+                        <StackPanel Orientation="Horizontal" Spacing="14" HorizontalAlignment="Center">
+                            <Image Width="42" Height="42" Source="avares://Galimapia/Assets/icons/welcome-map.png" />
+                            <TextBlock Text="Galimapia" FontSize="28" Foreground="#E6D7C3" VerticalAlignment="Center" />
+                        </StackPanel>
+                        <TextBlock Margin="0,10,0,28" HorizontalAlignment="Center" Foreground="#8A8378"
+                                   Text="Each project is its own folder." />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12">
+                            <Button x:Name="NewProjectButton" Classes="welcome" MinWidth="200">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Image Width="22" Height="22" Source="avares://Galimapia/Assets/icons/welcome-new.png" />
+                                    <TextBlock Text="New project" VerticalAlignment="Center" Foreground="#E6D7C3" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="OpenProjectButton" Classes="welcome" MinWidth="200">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Image Width="22" Height="22" Source="avares://Galimapia/Assets/icons/welcome-folder.png" />
+                                    <TextBlock Text="Open project" VerticalAlignment="Center" Foreground="#E6D7C3" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+
+                        <Border x:Name="CreatePanel" IsVisible="False" Background="#262421" CornerRadius="12"
+                                Padding="16" Margin="0,18,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Project name" />
+                                <TextBox x:Name="ProjectNameBox" PlaceholderText="Vienna 1820" />
+                                <TextBlock Text="Save inside" />
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="CreateFolderText" VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis" Text="Choose a folder" />
+                                    <Button x:Name="ChooseFolderButton" Grid.Column="1" Classes="compact"
+                                            VerticalAlignment="Center" Content="Choose" />
+                                </Grid>
+                                <TextBlock x:Name="CreatePreview" Foreground="#8A8378" TextWrapping="Wrap" />
+                                <Button x:Name="CreateProjectButton" Classes="welcome" HorizontalAlignment="Left"
+                                        Content="Create project" />
+                                <TextBlock x:Name="CreateError" Foreground="#E07070" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock x:Name="WelcomeError" Margin="0,14,0,0" Foreground="#E07070" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,28,0,8" Foreground="#8A8378" Text="Recent" />
+                        <TextBlock x:Name="RecentEmpty" Foreground="#8A8378" Text="No recent projects" IsVisible="False" />
+                        <StackPanel x:Name="RecentList" Spacing="6" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Border>
+    </Grid>
+
+</Window>

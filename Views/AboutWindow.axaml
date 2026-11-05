@@ -1,0 +1,22 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Galimapia.Views.AboutWindow"
+        Title="About Galimapia"
+        Width="420"
+        Height="280"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#1C1B19">
+    <StackPanel Margin="28" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Center">
+        <Image Width="48" Height="48" HorizontalAlignment="Center"
+               Source="avares://Galimapia/Assets/icons/welcome-map.png" />
+        <TextBlock x:Name="NameText" HorizontalAlignment="Center" FontFamily="Consolas"
+                   FontSize="26" Foreground="#E6D7C3" />
+        <TextBlock x:Name="VersionText" HorizontalAlignment="Center" FontFamily="Consolas"
+                   FontSize="14" Foreground="#C8C2B8" />
+        <TextBlock x:Name="AuthorText" Margin="0,10,0,0" HorizontalAlignment="Center" FontFamily="Consolas"
+                   FontSize="14" Foreground="#E6D7C3" />
+        <TextBlock HorizontalAlignment="Center" FontFamily="Consolas" FontSize="13" Foreground="#8A8378"
+                   Text="Cadastral scans, stitched on an infinite canvas." />
+    </StackPanel>
+</Window>
